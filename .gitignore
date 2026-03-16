@@ -1,0 +1,19 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# packaging artifacts
+*.egg-info/
+
+# virtual environments
+.venv/
+venv/
+
+# runtime output
+data/
+
+# pytest cache
+.pytest_cache/
+
+# IDE
+.vscode/

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from string import ascii_lowercase
 from typing import Iterable, Iterator, List
 
@@ -12,12 +13,42 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 OUTPUT_PATH = Path("data") / "all_names.json"
+DECLARED_COUNT_PATTERN = re.compile(r"(\d+)\s+[A-Za-zÄÖÜäöüß]+namen", re.IGNORECASE)
+_NAVIGATION_KEYWORDS = {"nav", "menu", "breadcrumb", "letter", "alphabet", "toc", "pager"}
 
 
 def fetch_html(url: str) -> str:
     response = requests.get(url, timeout=20)
     response.raise_for_status()
     return response.text
+
+
+def extract_declared_count(html_or_soup: str | BeautifulSoup) -> int | None:
+    """Extract the declared number of names from the page title or heading."""
+    if isinstance(html_or_soup, BeautifulSoup):
+        soup = html_or_soup
+    else:
+        soup = BeautifulSoup(html_or_soup, "html.parser")
+
+    texts: List[str] = []
+    title = soup.find("title")
+    if title:
+        texts.append(title.get_text(" ", strip=True))
+    for heading in soup.find_all(["h1", "h2"]):
+        text = heading.get_text(" ", strip=True)
+        if "namen" in text.lower():
+            texts.append(text)
+            break
+
+    for text in texts:
+        match = DECLARED_COUNT_PATTERN.search(text)
+        if match:
+            return int(match.group(1))
+
+    fallback = DECLARED_COUNT_PATTERN.search(soup.get_text(" ", strip=True))
+    if fallback:
+        return int(fallback.group(1))
+    return None
 
 
 def extract_names(html: str) -> List[str]:
@@ -29,45 +60,100 @@ def extract_names(html: str) -> List[str]:
     if content is None:
         content = article
 
-    target_list = _find_name_list(content)
-    if target_list is not None:
-        if target_list.name == "dl":
-            raw_entries = (dt.get_text(" ", strip=True) for dt in target_list.find_all("dt"))
-        else:
-            raw_entries = (li.get_text(" ", strip=True) for li in target_list.find_all("li"))
-    else:
-        raw_entries = _iter_link_names(content)
-
     names: List[str] = []
     seen = set()
-    for text in raw_entries:
-        if not text:
-            continue
-        name = _normalize_name(text)
-        if not name or not _looks_like_name(name) or name in seen:
-            continue
-        seen.add(name)
-        names.append(name)
+    declared_total = extract_declared_count(soup)
+
+    def append_entries(entries: Iterable[str]) -> None:
+        for text in entries:
+            if not text:
+                continue
+            name = _normalize_name(text)
+            if not name or not _looks_like_name(name) or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+
+    candidate_lists = _find_name_lists(content)
+    if candidate_lists:
+        for candidate in candidate_lists:
+            append_entries(_iter_list_entries(candidate))
+    else:
+        append_entries(_iter_link_names(content))
+
+    if declared_total and len(names) < declared_total:
+        append_entries(_iter_link_names(content))
 
     if not names:
         raise RuntimeError("Could not locate the primary name list on the page")
     return names
 
 
-def _find_name_list(content: Tag | None) -> Tag | None:
+def _find_name_lists(content: Tag | None) -> List[Tag]:
     if content is None:
-        return None
-    candidate = content.find(["ul", "ol", "dl"])
-    if candidate:
-        return candidate
-    # Some templates wrap the names inside helper containers (e.g. sections or divs).
-    for wrapper in content.find_all(True, recursive=False):
-        if not isinstance(wrapper, Tag):
+        return []
+
+    candidates: List[tuple[int, Tag]] = []
+    max_count = 0
+    for node in content.find_all(["ul", "ol", "dl"]):
+        if _looks_like_navigation_list(node):
             continue
-        nested = wrapper.find(["ul", "ol", "dl"])
-        if nested:
-            return nested
-    return None
+        entry_count = _list_entry_count(node)
+        if entry_count == 0:
+            continue
+        candidates.append((entry_count, node))
+        if entry_count > max_count:
+            max_count = entry_count
+
+    if not candidates:
+        return []
+
+    threshold = max(max_count // 3, 20)
+    selected = [node for count, node in candidates if count >= threshold]
+    if selected:
+        return selected
+    # Fallback to the single largest list if no list crossed the threshold.
+    largest = max(candidates, key=lambda item: item[0])[1]
+    return [largest]
+
+
+def _list_entry_count(tag: Tag) -> int:
+    if tag.name == "dl":
+        entries = tag.find_all("dt", recursive=False)
+        if not entries:
+            entries = tag.find_all("dt")
+    else:
+        entries = tag.find_all("li", recursive=False)
+        if not entries:
+            entries = tag.find_all("li")
+    return len(entries)
+
+
+def _iter_list_entries(tag: Tag) -> Iterable[str]:
+    if tag.name == "dl":
+        entries = tag.find_all("dt", recursive=False)
+        if not entries:
+            entries = tag.find_all("dt")
+    else:
+        entries = tag.find_all("li", recursive=False)
+        if not entries:
+            entries = tag.find_all("li")
+    for node in entries:
+        if isinstance(node, Tag):
+            yield node.get_text(" ", strip=True)
+
+
+def _looks_like_navigation_list(tag: Tag) -> bool:
+    marker = " ".join(tag.get("class", [])) + " " + (tag.get("id") or "") + " " + (tag.get("role") or "")
+    marker = marker.lower()
+    if any(keyword in marker for keyword in _NAVIGATION_KEYWORDS):
+        return True
+    ancestor = tag.parent
+    while isinstance(ancestor, Tag):
+        if ancestor.name == "nav":
+            return True
+        ancestor = ancestor.parent
+    return False
 
 
 def _iter_link_names(content: Tag | None) -> Iterable[str]:

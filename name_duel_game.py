@@ -90,16 +90,62 @@ class ScoreTracker:
     def _score_value(self, entry: ScoreEntry) -> float:
         return entry.rating if self.mode == "elo" else float(entry.wins)
 
+    def to_state(self, names: Sequence[str]) -> dict:
+        name_set = set(names)
+        entries = []
+        for name in names:
+            if name in self.entries:
+                entries.append(self._entry_state(name, self.entries[name]))
+        for name, entry in self.entries.items():
+            if name not in name_set:
+                entries.append(self._entry_state(name, entry))
+        return {"mode": self.mode, "names": list(names), "entries": entries}
+
+    def _entry_state(self, name: str, entry: ScoreEntry) -> dict:
+        matches = entry.wins + entry.losses
+        score = self._score_value(entry)
+        return {
+            "name": name,
+            "wins": entry.wins,
+            "losses": entry.losses,
+            "matches": matches,
+            "rating": entry.rating,
+            "score": score,
+        }
+
+    @classmethod
+    def from_state(cls, payload: dict) -> Tuple["ScoreTracker", List[str]]:
+        mode = payload.get("mode", "count")
+        tracker = cls(mode=mode)
+        for entry_payload in payload.get("entries", []):
+            name = entry_payload.get("name")
+            if not name:
+                continue
+            entry = tracker._get_entry(name)
+            entry.wins = int(entry_payload.get("wins", 0))
+            entry.losses = int(entry_payload.get("losses", 0))
+            entry.rating = float(entry_payload.get("rating", entry.rating))
+        names = payload.get("names", [])
+        return tracker, list(names)
+
 
 def pick_pair(names: List[str], rng: random.Random) -> Tuple[str, str]:
     first, second = rng.sample(names, 2)
     return first, second
 
 
-def run_game(names: Iterable[str], mode: str, seed: int | None = None) -> None:
+def run_game(
+    names: Iterable[str],
+    mode: str,
+    seed: int | None = None,
+    tracker: ScoreTracker | None = None,
+    state_path: Path | None = None,
+    autosave_interval: int = 0,
+) -> None:
     rng = random.Random(seed)
-    tracker = ScoreTracker(mode=mode)
+    tracker = tracker or ScoreTracker(mode=mode)
     names_list = list(names)
+    autosave_counter = 0
 
     print("Pairwise Name Duel")
     print("-------------------")
@@ -120,17 +166,28 @@ def run_game(names: Iterable[str], mode: str, seed: int | None = None) -> None:
         if choice == "1":
             tracker.record(first, second)
             print(f"You preferred {first}.\n")
+            autosave_counter += 1
         elif choice == "2":
             tracker.record(second, first)
             print(f"You preferred {second}.\n")
+            autosave_counter += 1
         else:
             print("Invalid input, try again.\n")
+            continue
+
+        if autosave_interval > 0 and autosave_counter >= autosave_interval:
+            save_ranking_state(state_path, tracker, names_list)
+            autosave_counter = 0
+            print(f"[Autosaved ranking progress to {state_path}]")
 
     print("\nResults")
     print("-------")
     ranking = tracker.ranking()
     if not ranking:
         print("No results recorded. Play at least one round next time!")
+        save_ranking_state(state_path, tracker, names_list)
+        if state_path:
+            print(f"Progress saved to {state_path}")
         return
     for idx, (name, entry) in enumerate(ranking, start=1):
         total_matches = entry.wins + entry.losses
@@ -141,6 +198,10 @@ def run_game(names: Iterable[str], mode: str, seed: int | None = None) -> None:
             f"{idx:>3}. {name:<20} {metric_label}: {score_str} "
             f"(wins: {entry.wins}, losses: {entry.losses}, matches: {total_matches})"
         )
+
+    save_ranking_state(state_path, tracker, names_list)
+    if state_path:
+        print(f"Final ranking saved to {state_path}")
 
 
 def perform_setup(names: List[str], mode: str, rng: random.Random) -> List[str]:
@@ -370,6 +431,42 @@ def maybe_save_filtered(
     print(f"Saved {len(entries)} entries to {target_path}")
 
 
+def save_ranking_state(path: Path | None, tracker: ScoreTracker, names: Sequence[str]) -> None:
+    if path is None:
+        return
+    state = tracker.to_state(names)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def load_ranking_state(path: Path | None) -> dict | None:
+    if path is None or not path.exists():
+        return None
+    with path.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def maybe_resume_state(path: Path | None, mode: str) -> Tuple[ScoreTracker, List[str]] | None:
+    payload = load_ranking_state(path)
+    if not payload:
+        return None
+    saved_mode = payload.get("mode")
+    saved_names = payload.get("names") or []
+    if saved_mode != mode:
+        print("Saved state uses a different scoring mode; ignoring it.")
+        return None
+    if not saved_names:
+        print("Saved state is missing the name list; ignoring it.")
+        return None
+    if not prompt_yes_no(
+        f"Found a saved {saved_mode} session with {len(saved_names)} names. Resume it?", default=True
+    ):
+        return None
+    tracker, names = ScoreTracker.from_state(payload)
+    print(f"Loaded ranking progress for {len(names)} names.")
+    return tracker, names
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Pairwise ranking game for baby names.")
     parser.add_argument(
@@ -396,18 +493,43 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional random seed for reproducible pair order.",
     )
+    parser.add_argument(
+        "--state",
+        type=Path,
+        default=DATA_PATH.parent / "ranking_state.json",
+        help="Path to save/load ranking progress (default: data/ranking_state.json).",
+    )
+    parser.add_argument(
+        "--autosave-interval",
+        type=int,
+        default=0,
+        help="Autosave ranking progress every N comparisons (0 disables).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    dataset_records = load_dataset_records(args.data)
-    names = load_names(args.data, gender=args.gender)
-    setup_seed = args.seed + 1 if args.seed is not None else None
-    rng = random.Random(setup_seed)
-    selected_names = perform_setup(names, mode=args.mode, rng=rng)
-    filtered_names = maybe_guided_filter(selected_names, dataset_records, args.data, args.gender)
-    run_game(filtered_names, mode=args.mode, seed=args.seed)
+    resume_payload = maybe_resume_state(args.state, args.mode)
+    if resume_payload:
+        tracker, names_for_game = resume_payload
+    else:
+        dataset_records = load_dataset_records(args.data)
+        names = load_names(args.data, gender=args.gender)
+        setup_seed = args.seed + 1 if args.seed is not None else None
+        rng = random.Random(setup_seed)
+        selected_names = perform_setup(names, mode=args.mode, rng=rng)
+        filtered_names = maybe_guided_filter(selected_names, dataset_records, args.data, args.gender)
+        tracker = ScoreTracker(mode=args.mode)
+        names_for_game = filtered_names
+    run_game(
+        names_for_game,
+        mode=args.mode,
+        seed=args.seed,
+        tracker=tracker,
+        state_path=args.state,
+        autosave_interval=max(0, args.autosave_interval),
+    )
 
 
 if __name__ == "__main__":

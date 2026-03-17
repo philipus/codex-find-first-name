@@ -9,7 +9,7 @@ import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 
 DATA_PATH = Path("data") / "all_names.json"
 
@@ -256,6 +256,120 @@ def manual_exclude(names: List[str]) -> List[str]:
     return remaining
 
 
+def load_dataset_records(path: Path) -> List[dict]:
+    if not path.exists():
+        raise FileNotFoundError(f"Could not find {path}. Run the scraper first.")
+    with path.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, list):
+        raise ValueError("Dataset must be a list of name records.")
+    return data
+
+
+def prompt_yes_no(question: str, default: bool = False) -> bool:
+    suffix = " [Y/n]: " if default else " [y/N]: "
+    while True:
+        reply = input(question + suffix).strip().lower()
+        if not reply:
+            return default
+        if reply in {"y", "yes"}:
+            return True
+        if reply in {"n", "no"}:
+            return False
+        print("Please answer with 'y' or 'n'.")
+
+
+def guided_filter_names(
+    names: Sequence[str],
+    prompt: Callable[[str], str] = input,
+    notify: Callable[[str], None] = print,
+) -> List[str]:
+    kept: List[str] = []
+    total = len(names)
+    if total == 0:
+        return kept
+    notify("Guided filtering controls: y = keep, n = discard, q = finish reviewing.\n")
+    for idx, name in enumerate(names, start=1):
+        while True:
+            response = prompt(f"[{idx}/{total}] Keep '{name}'? [y/n/q]: ").strip().lower()
+            if response == "y":
+                kept.append(name)
+                notify(f"Kept {len(kept)} of {idx} reviewed.\n")
+                break
+            if response == "n":
+                notify(f"Excluded '{name}'. {len(kept)} kept so far.\n")
+                break
+            if response == "q":
+                notify("Stopping guided filtering; remaining names are kept.")
+                kept.extend(names[idx - 1 :])
+                return kept
+            notify("Please enter 'y', 'n', or 'q'.")
+    return kept
+
+
+def select_records_for_names(
+    records: List[dict],
+    allowed_names: Iterable[str],
+    gender: str | None = None,
+) -> List[dict]:
+    allowed = {name.lower() for name in allowed_names}
+    gender_filter = gender.lower() if gender else None
+    selected: List[dict] = []
+    for record in records:
+        name = str(record.get("name", "")).lower()
+        if name not in allowed:
+            continue
+        if gender_filter and str(record.get("gender", "")).lower() != gender_filter:
+            continue
+        selected.append(record)
+    return selected
+
+
+def save_filtered_records(records: List[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def maybe_guided_filter(
+    names: List[str],
+    dataset_records: List[dict],
+    dataset_path: Path,
+    gender: str | None,
+) -> List[str]:
+    if not names:
+        return names
+    if not prompt_yes_no("Do you want to review names one-by-one before starting the duel game?", default=False):
+        return names
+    print(f"Loaded {len(names)} names for guided filtering.")
+    filtered = guided_filter_names(names)
+    print(f"Guided filtering kept {len(filtered)} of {len(names)} names.")
+    if len(filtered) < 2:
+        raise ValueError("Need at least two names to continue after filtering.")
+    maybe_save_filtered(filtered, dataset_records, dataset_path, gender)
+    return filtered
+
+
+def maybe_save_filtered(
+    filtered_names: List[str],
+    dataset_records: List[dict],
+    dataset_path: Path,
+    gender: str | None,
+) -> None:
+    if not filtered_names:
+        return
+    if not prompt_yes_no("Save this filtered list for future sessions?", default=False):
+        return
+    default_path = dataset_path.with_name(f"{dataset_path.stem}_filtered.json")
+    raw_path = input(f"Output file path [{default_path}]: ").strip()
+    target_path = Path(raw_path) if raw_path else default_path
+    entries = select_records_for_names(dataset_records, filtered_names, gender)
+    if not entries:
+        print("No matching dataset entries found for the filtered names; nothing saved.")
+        return
+    save_filtered_records(entries, target_path)
+    print(f"Saved {len(entries)} entries to {target_path}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Pairwise ranking game for baby names.")
     parser.add_argument(
@@ -287,11 +401,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    dataset_records = load_dataset_records(args.data)
     names = load_names(args.data, gender=args.gender)
     setup_seed = args.seed + 1 if args.seed is not None else None
     rng = random.Random(setup_seed)
     selected_names = perform_setup(names, mode=args.mode, rng=rng)
-    run_game(selected_names, mode=args.mode, seed=args.seed)
+    filtered_names = maybe_guided_filter(selected_names, dataset_records, args.data, args.gender)
+    run_game(filtered_names, mode=args.mode, seed=args.seed)
 
 
 if __name__ == "__main__":

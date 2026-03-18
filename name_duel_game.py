@@ -146,31 +146,53 @@ def run_game(
     tracker = tracker or ScoreTracker(mode=mode)
     names_list = list(names)
     autosave_counter = 0
+    history: List[dict] = []
+    pending_pair: Tuple[str, str] | None = None
 
     print("Pairwise Name Duel")
     print("-------------------")
     print("Choose your favorite between two names.")
-    print("Controls: 1 = first, 2 = second, s = skip, q = quit.")
+    print("Controls: 1 = first, 2 = second, s = skip, u = undo last, q = quit.")
     print()
 
     while True:
-        first, second = pick_pair(names_list, rng)
+        if pending_pair is not None:
+            first, second = pending_pair
+            pending_pair = None
+        else:
+            first, second = pick_pair(names_list, rng)
         print(f"1) {first}")
         print(f"2) {second}")
-        choice = input("Your pick [1/2/s/q]: ").strip().lower()
+        choice = input("Your pick [1/2/s/u/q]: ").strip().lower()
         if choice == "q":
             break
         if choice == "s":
             print("Skipped.\n")
             continue
+        if choice == "u":
+            if not history:
+                print("Nothing to undo.\n")
+                continue
+            snapshot = history.pop()
+            pending_pair = snapshot["pair"]
+            autosave_counter = restore_duel_snapshot(tracker, snapshot)
+            if state_path:
+                save_ranking_state(state_path, tracker, names_list)
+                print(f"[Undo saved to {state_path}]")
+            print("Last decision undone.\n")
+            continue
         if choice == "1":
+            snapshot = capture_duel_snapshot(tracker, (first, second), autosave_counter)
             tracker.record(first, second)
             print(f"You preferred {first}.\n")
             autosave_counter += 1
+            history.append(snapshot)
         elif choice == "2":
+            snapshot = capture_duel_snapshot(tracker, (first, second), autosave_counter)
             tracker.record(second, first)
             print(f"You preferred {second}.\n")
             autosave_counter += 1
+            history.append(snapshot)
         else:
             print("Invalid input, try again.\n")
             continue
@@ -429,6 +451,38 @@ def maybe_save_filtered(
         return
     save_filtered_records(entries, target_path)
     print(f"Saved {len(entries)} entries to {target_path}")
+
+
+def capture_duel_snapshot(
+    tracker: ScoreTracker, pair: Tuple[str, str], autosave_counter: int
+) -> dict:
+    return {
+        "pair": pair,
+        "autosave_counter": autosave_counter,
+        "entries": {
+            pair[0]: _entry_snapshot(tracker, pair[0]),
+            pair[1]: _entry_snapshot(tracker, pair[1]),
+        },
+    }
+
+
+def _entry_snapshot(tracker: ScoreTracker, name: str) -> dict | None:
+    entry = tracker.entries.get(name)
+    if entry is None:
+        return None
+    return {"wins": entry.wins, "losses": entry.losses, "rating": entry.rating}
+
+
+def restore_duel_snapshot(tracker: ScoreTracker, snapshot: dict) -> int:
+    for name, state in snapshot.get("entries", {}).items():
+        if state is None:
+            tracker.entries.pop(name, None)
+            continue
+        entry = tracker._get_entry(name)
+        entry.wins = state["wins"]
+        entry.losses = state["losses"]
+        entry.rating = state["rating"]
+    return int(snapshot.get("autosave_counter", 0))
 
 
 def save_ranking_state(path: Path | None, tracker: ScoreTracker, names: Sequence[str]) -> None:

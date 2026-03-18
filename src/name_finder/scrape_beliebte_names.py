@@ -144,7 +144,10 @@ def _iter_list_entries(tag: Tag) -> Iterable[str]:
 
 
 def _looks_like_navigation_list(tag: Tag) -> bool:
-    marker = " ".join(tag.get("class", [])) + " " + (tag.get("id") or "") + " " + (tag.get("role") or "")
+    classes = tag.get("class")
+    class_str = " ".join(classes) if isinstance(classes, list) else ""
+
+    marker = f"{class_str} {tag.get('id') or ''} {tag.get('role') or ''}"
     marker = marker.lower()
     if any(keyword in marker for keyword in _NAVIGATION_KEYWORDS):
         return True

@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from name_duel_game import guided_filter_names, select_records_for_names, save_filtered_records
+from name_finder.name_duel_game import (
+    guided_filter_names,
+    select_records_for_names,
+    save_filtered_records,
+)
 
 
 def test_guided_filter_names_honors_choices() -> None:

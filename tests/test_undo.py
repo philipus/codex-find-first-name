@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from name_duel_game import ScoreTracker, capture_duel_snapshot, restore_duel_snapshot
+from name_finder.name_duel_game import (
+    ScoreTracker,
+    capture_duel_snapshot,
+    restore_duel_snapshot,
+)
 
 
 def test_undo_restores_simple_counts() -> None:

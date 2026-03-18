@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from name_duel_game import ScoreTracker, save_ranking_state, load_ranking_state
+from name_finder.name_duel_game import ScoreTracker, save_ranking_state, load_ranking_state
 
 
 def test_count_mode_state_roundtrip(tmp_path: Path) -> None:

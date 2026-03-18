@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scrape_beliebte_names import extract_names, extract_declared_count
+from name_finder.scrape_beliebte_names import extract_names, extract_declared_count
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"

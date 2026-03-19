@@ -362,31 +362,54 @@ def prompt_yes_no(question: str, default: bool = False) -> bool:
         print("Please answer with 'y' or 'n'.")
 
 
+def capture_guided_filter_snapshot(kept: Sequence[str], index: int) -> dict:
+    return {"kept_count": len(kept), "index": index}
+
+
+def restore_guided_filter_snapshot(kept: List[str], snapshot: dict) -> int:
+    kept_count = int(snapshot.get("kept_count", 0))
+    del kept[kept_count:]
+    return int(snapshot.get("index", 0))
+
+
 def guided_filter_names(
     names: Sequence[str],
     prompt: Callable[[str], str] = input,
     notify: Callable[[str], None] = print,
 ) -> List[str]:
     kept: List[str] = []
+    history: List[dict] = []
     total = len(names)
     if total == 0:
         return kept
-    notify("Guided filtering controls: y = keep, n = discard, q = finish reviewing.\n")
-    for idx, name in enumerate(names, start=1):
-        while True:
-            response = prompt(f"[{idx}/{total}] Keep '{name}'? [y/n/q]: ").strip().lower()
-            if response == "y":
-                kept.append(name)
-                notify(f"Kept {len(kept)} of {idx} reviewed.\n")
-                break
-            if response == "n":
-                notify(f"Excluded '{name}'. {len(kept)} kept so far.\n")
-                break
-            if response == "q":
-                notify("Stopping guided filtering; remaining names are kept.")
-                kept.extend(names[idx - 1 :])
-                return kept
-            notify("Please enter 'y', 'n', or 'q'.")
+    notify("Guided filtering controls: y = keep, n = discard, u = undo last, q = finish reviewing.\n")
+    idx = 0
+    while idx < total:
+        name = names[idx]
+        response = prompt(f"[{idx + 1}/{total}] Keep '{name}'? [y/n/u/q]: ").strip().lower()
+        if response == "y":
+            history.append(capture_guided_filter_snapshot(kept, idx))
+            kept.append(name)
+            idx += 1
+            notify(f"Kept {len(kept)} of {idx} reviewed.\n")
+            continue
+        if response == "n":
+            history.append(capture_guided_filter_snapshot(kept, idx))
+            idx += 1
+            notify(f"Excluded '{name}'. {len(kept)} kept so far.\n")
+            continue
+        if response == "u":
+            if not history:
+                notify("Nothing to undo during guided filtering.\n")
+                continue
+            idx = restore_guided_filter_snapshot(kept, history.pop())
+            notify("Last guided-filtering decision undone.\n")
+            continue
+        if response == "q":
+            notify("Stopping guided filtering; remaining names are kept.")
+            kept.extend(names[idx:])
+            return kept
+        notify("Please enter 'y', 'n', 'u', or 'q'.")
     return kept
 
 

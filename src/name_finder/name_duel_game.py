@@ -7,9 +7,12 @@ import argparse
 import json
 import math
 import random
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Sequence, Tuple
+
+from name_finder.analysis import format_analysis, load_state, summarize_state
 
 DATA_PATH = Path("data") / "all_names.json"
 
@@ -573,8 +576,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--state",
         type=Path,
-        default=DATA_PATH.parent / "ranking_state.json",
-        help="Path to save/load ranking progress (default: data/ranking_state.json).",
+        default=None,
+        help="Path to save/load ranking progress (default for game mode: data/ranking_state.json).",
+    )
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="Print an analysis of a persisted ranking state instead of starting the game.",
     )
     parser.add_argument(
         "--autosave-interval",
@@ -587,7 +595,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    resume_payload = maybe_resume_state(args.state, args.mode)
+    default_state_path = DATA_PATH.parent / "ranking_state.json"
+    if args.analyze:
+        if args.state is None:
+            print("Analysis requires --state <path> to read a persisted ranking state.", file=sys.stderr)
+            raise SystemExit(2)
+        summary = summarize_state(load_state(args.state))
+        print(format_analysis(summary))
+        return
+
+    state_path = args.state or default_state_path
+    resume_payload = maybe_resume_state(state_path, args.mode)
     if resume_payload:
         tracker, names_for_game = resume_payload
     else:
@@ -604,7 +622,7 @@ def main() -> None:
         mode=args.mode,
         seed=args.seed,
         tracker=tracker,
-        state_path=args.state,
+        state_path=state_path,
         autosave_interval=max(0, args.autosave_interval),
     )
 

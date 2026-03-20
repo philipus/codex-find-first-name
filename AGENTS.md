@@ -24,3 +24,14 @@
 - Guided filtering & optional persistence of filtered lists
 - Ranking persistence + autosave/resume
 - Undo of the last duel decision
+
+## Dependencies
+
+- Do not create local replacements for external libraries (e.g. requests, bs4)
+- Use packages installed via pip
+- If a dependency is missing, update requirements.txt
+
+## Project structure
+
+- Code lives in src/name_finder/
+- Do not introduce new top-level packages without explicit instruction

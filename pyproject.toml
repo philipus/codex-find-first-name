@@ -1,0 +1,16 @@
+[project]
+name = "name-finder"
+version = "0.1.0"
+description = "CLI app to find first names via scraping and duel-based ranking"
+authors = [{name = "Filip Floegel"}]
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "requests",
+    "beautifulsoup4"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

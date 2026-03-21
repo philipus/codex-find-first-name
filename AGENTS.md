@@ -27,8 +27,9 @@
 
 ## Dependencies
 
+- Use real external libraries (e.g. requests, beautifulsoup4)
 - Do not create local replacements for external libraries (e.g. requests, bs4)
-- Use packages installed via pip
+- All dependencies must be installed via pip and declared in requirements.txt
 - If a dependency is missing, update requirements.txt
 
 ## Project structure

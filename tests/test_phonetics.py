@@ -20,6 +20,10 @@ REQUIRED_KEYS = {
         ("Floegel", "floegel", ["floe", "gel"]),
         ("Flögel", "floegel", ["floe", "gel"]),
         ("Garten", "garten", ["gar", "ten"]),
+        ("Lian", "lian", ["li", "an"]),
+        ("Liane", "liane", ["lia", "ne"]),
+        ("Emanuel", "emanuel", ["e", "ma", "nu", "el"]),
+        ("Maximilian", "maximilian", ["mak", "si", "mi", "li", "an"]),
     ],
 )
 def test_analyze_word_returns_expected_german_profile(
@@ -43,6 +47,23 @@ def test_analyze_word_normalizes_umlauts_to_ascii_sequences() -> None:
     assert result["normalized_word"] == "mueller"
     assert result["syllables"] == ["muel", "ler"]
     assert result["syllable_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        ("Flögel", "floegel"),
+        ("Floegel", "floegel"),
+        ("Václaw", "vaclaw"),
+        ("Émile", "emile"),
+        ("Müller", "mueller"),
+        ("straße", "strasse"),
+    ],
+)
+def test_normalization_handles_umlauts_and_general_diacritics(word: str, expected: str) -> None:
+    result = analyze_word(word, language="de")
+
+    assert result["normalized_word"] == expected
 
 
 def test_analyze_word_rejects_unsupported_languages_explicitly() -> None:
